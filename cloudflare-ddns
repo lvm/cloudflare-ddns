@@ -1,0 +1,158 @@
+#!/usr/bin/env python3
+
+"""
+cloudflare-ddns - Simple tool to update Cloudflare Dynamic DNS
+License: BSD 3-Clause
+Copyright (c) 2020, Mauro <mauro@sdf.org>
+All rights reserved.
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+1. Redistributions of source code must retain the above copyright
+notice, this list of conditions and the following disclaimer.
+2. Redistributions in binary form must reproduce the above copyright
+notice, this list of conditions and the following disclaimer in the
+documentation and/or other materials provided with the distribution.
+3. Neither the name of the copyright holder nor the names of its
+contributors may be used to endorse or promote products derived from
+this software without specific prior written permission.
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+"""
+
+__author__ = "Mauro"
+__version__ = "0.0.1"
+__license__ = "BSD3"
+
+import sys
+import json
+import argparse
+import requests
+from collections import namedtuple
+
+
+Account = namedtuple('Account', 'ip email api_key')
+
+
+def what_is_my_ip() -> str:
+    """
+    Get your Public IP
+    """
+    url = "http://checkip.amazonaws.com/"
+
+    try:
+        r = requests.get(url)
+        return "" if not r.status_code == 200 else str(r.text)
+    except:
+        return ""
+
+
+def get_zone(acct:Account, zone:str) -> dict:
+    """
+    Report your Pub IP to Cloudflare
+    """
+    headers = {
+        "X-Auth-Email": acct.email,
+        "X-Auth-Key": acct.api_key,
+        "Content-Type": "application/json",
+    }
+    url = f"https://api.cloudflare.com/client/v4/zones?name={zone}"
+    r = requests.get(url, headers=headers)
+    return {} if not r.status_code == 200 else r.json()
+
+
+def get_records(acct:Account, zone_id:str, record_name:str) -> dict:
+    """
+    Report your Pub IP to Cloudflare
+    """
+    headers = {
+        "X-Auth-Email": acct.email,
+        "X-Auth-Key": acct.api_key,
+        "Content-Type": "application/json",
+    }
+    url = f"https://api.cloudflare.com/client/v4/zones/{zone_id}/dns_records"
+    if record_name:
+        url += f"?name={record_name}"
+    r = requests.get(url, headers=headers)
+    return {} if not r.status_code == 200 else r.json()
+
+
+def update_record(acct:Account, zone:str, record:str) -> bool:
+    """
+    Update your Pub IP in a Record
+    """
+    headers = {
+        "X-Auth-Email": acct.email,
+        "X-Auth-Key": acct.api_key,
+        "Content-Type": "application/json",
+    }
+    zone_id = ""
+    record_id = ""
+
+    _zone = get_zone(acct, zone)
+    if _zone:
+        zone_id = _zone.get("result")[0].get("id")
+    if not zone_id:
+        # lets just stop here, no need to further requesting
+        return False
+
+    _records = get_records(acct, zone_id, record)
+    if _zone:
+        record_id = _records.get("result")[0].get("id")
+    if not record_id:
+        # lets just stop here, no need to further requesting
+        return False
+
+    url = f"https://api.cloudflare.com/client/v4/zones/{zone_id}/dns_records/{record_id}"
+    data = {"type": "A", "name": record, "content": acct.ip}
+    r = requests.put(url, headers=headers, data=json.dumps(data))
+
+    return r.status_code == 200
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--zone',
+                        type=str,
+                        default="",
+                        help="Zone Name (ie: domain.tld)")
+    parser.add_argument('--record',
+                        type=str,
+                        default="",
+                        help="Record Name (ie: sub.domain.tld)")
+    parser.add_argument('--email',
+                        type=str,
+                        default="",
+                        help="Cloudflare associated email account")
+    parser.add_argument('--api-key',
+                        type=str,
+                        default="",
+                        help="Cloudflare API key")
+
+    args = parser.parse_args()
+    if args.zone and args.record and args.email and args.api_key:
+
+        pub_ip = what_is_my_ip()
+
+        if not pub_ip:
+            print ("[ERR] Are you sure you're online?")
+            sys.exit(1)
+
+        acct = Account(
+            ip=pub_ip,
+            email=args.email,
+            api_key=args.api_key
+        )
+        update_record(acct, args.zone, args.record)
+        sys.exit(0)
+    else:
+        parser.print_help()
